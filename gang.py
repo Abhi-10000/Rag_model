@@ -206,4 +206,4 @@ if __name__ == "_main_":
     # e.g., uvicorn.run("main:app", ...)
     # Since you saved the file as gang.py, you would run it from the terminal as:
     # uvicorn gang:app --reload
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
