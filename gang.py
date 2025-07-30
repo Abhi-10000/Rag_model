@@ -1,3 +1,4 @@
+# --------------------------------------------------------------ABHILASH INTIAL CODE------------------------------------
 # import os
 # import hashlib
 # import shutil
@@ -207,6 +208,208 @@
 #     # Since you saved the file as gang.py, you would run it from the terminal as:
 #     # uvicorn gang:app --reload
 #     uvicorn.run(app, host="0.0.0.0", port=8000)
+#-----------------------------------------------------------------YOGI D1--------------------------------------------------
+# import os
+# import hashlib
+# import shutil
+# import logging
+# import asyncio
+# import re
+# from contextlib import asynccontextmanager
+# from dotenv import load_dotenv
+# from fastapi import FastAPI, HTTPException, Depends
+# from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+# from pydantic import BaseModel
+
+# # --- LangChain Imports ---
+# from langchain_community.document_loaders import UnstructuredURLLoader
+# from langchain_chroma import Chroma
+# from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_groq import ChatGroq
+# from langchain_core.prompts import ChatPromptTemplate
+# from langchain_core.output_parsers import StrOutputParser
+# from langchain_core.runnables import RunnablePassthrough
+# from langchain_text_splitters import RecursiveCharacterTextSplitter
+# from langchain_core.documents import Document
+
+# # --- Configuration & Logging ---
+# load_dotenv()
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# # --- Authentication ---
+# EXPECTED_API_KEY = os.getenv("HACKRX_API_KEY")
+# auth_scheme = HTTPBearer()
+
+# def verify_token(credentials: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+#     """Verifies the API key provided in the request header."""
+#     if not EXPECTED_API_KEY or credentials.scheme != "Bearer" or credentials.credentials != EXPECTED_API_KEY:
+#         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+#     return credentials
+
+# # --- Pydantic Models ---
+# class HackRxRequest(BaseModel):
+#     """Defines the structure of the incoming API request."""
+#     documents: str
+#     questions: list[str]
+
+# class HackRxResponse(BaseModel):
+#     """Defines the structure of the API response."""
+#     answers: list[str]
+
+# # --- Global Objects & Cache ---
+# embedding_function = None
+# llm = None
+# prompt = None
+# retriever_cache = {}
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     """Initializes models and resources on application startup."""
+#     global embedding_function, llm, prompt
+#     logging.info("Application startup: Initializing models...")
+
+#     model_name = "BAAI/bge-large-en-v1.5"
+#     model_kwargs = {"device": "cpu"}
+#     encode_kwargs = {"normalize_embeddings": True}
+#     embedding_function = HuggingFaceEmbeddings(
+#         model_name=model_name, model_kwargs=model_kwargs, encode_kwargs=encode_kwargs
+#     )
+    
+#     llm = ChatGroq(model="llama3-70b-8192", temperature=0)
+    
+#     template = """You are a universal document analysis assistant. Your primary function is to answer questions based *strictly* on the provided context.
+
+#     Core Principles:
+#     1.  **Grounding:** Extract information ONLY from the provided context. Do not use any external knowledge.
+#     2.  **Completeness:** If the context provides a rule (e.g., a financial limit), also look for its conditions and exceptions (e.g., a waiting period) to provide a complete answer.
+#     3.  **Honesty:** If the information is not available in the context, you MUST state: "This information is not available in the provided document." Do not speculate or infer.
+#     4.  **Precision:** Provide direct quotes and specific details from the context whenever possible to support your answer.
+
+#     Context:
+#     {context}
+
+#     Question: {question}
+
+#     Answer:"""
+    
+#     prompt = ChatPromptTemplate.from_template(template)
+    
+#     logging.info("Models and prompt are ready.")
+#     yield
+#     logging.info("Application shutdown: Clearing cache.")
+#     retriever_cache.clear()
+
+# app = FastAPI(title="HackRx Optimized RAG API", lifespan=lifespan)
+
+# def get_retriever_for_url(document_url: str):
+#     """
+#     Creates a retriever for a given document URL. This function is computationally expensive
+#     and its results should be cached.
+#     """
+#     try:
+#         loader = UnstructuredURLLoader(urls=[document_url], strategy="fast")
+#         documents = loader.load()
+        
+#         text_splitter = RecursiveCharacterTextSplitter(
+#             chunk_size=1000,
+#             chunk_overlap=200,
+#             length_function=len,
+#             separators=[
+#                 "\n\n\n", "\n\n", "\n", ". ", " ",
+#                 r"\n\d{1,2}\.\d{1,2}\.\s", r"\n\d{1,2}\.\s", r"\n[a-z]\)"
+#             ]
+#         )
+        
+#         splits = text_splitter.split_documents(documents)
+        
+#         if not splits:
+#             raise ValueError("Document could not be split into chunks.")
+
+#         url_hash = hashlib.md5(document_url.encode()).hexdigest()
+#         collection_name = f"docs_{url_hash}"
+
+#         vectorstore = Chroma.from_documents(
+#             documents=splits,
+#             embedding=embedding_function,
+#             collection_name=collection_name
+#         )
+        
+#         retriever = vectorstore.as_retriever(
+#             search_type="similarity",
+#             search_kwargs={"k": 7}
+#         )
+        
+#         logging.info(f"Successfully created and cached retriever for document with {len(splits)} chunks")
+#         return retriever
+        
+#     except Exception as e:
+#         logging.error(f"Error creating retriever for URL {document_url}: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+
+# def answer_question(question: str, retriever):
+#     """Answers a single question using the provided RAG chain."""
+#     try:
+#         def format_docs(docs):
+#             return "\n\n".join(doc.page_content for doc in docs)
+        
+#         rag_chain = (
+#             {"context": retriever | format_docs, "question": RunnablePassthrough()}
+#             | prompt
+#             | llm
+#             | StrOutputParser()
+#         )
+        
+#         answer = rag_chain.invoke(question)
+#         return answer.strip()
+        
+#     except Exception as e:
+#         logging.error(f"Error in answer_question for '{question}': {str(e)}")
+#         return f"An error occurred while processing the question: {str(e)}"
+
+# @app.post("/hackrx/run", response_model=HackRxResponse)
+# async def process_documents_and_questions(
+#     request_data: HackRxRequest,
+#     token: HTTPAuthorizationCredentials = Depends(verify_token)
+# ):
+#     """
+#     Main API endpoint. Uses a cache to avoid reprocessing documents, ensuring fast responses.
+#     """
+#     try:
+#         doc_url = request_data.documents
+        
+#         if doc_url in retriever_cache:
+#             logging.info(f"Retriever found in cache for URL: {doc_url}")
+#             retriever = retriever_cache[doc_url]
+#         else:
+#             logging.info(f"Retriever not in cache. Processing new document: {doc_url}")
+#             retriever = get_retriever_for_url(doc_url)
+#             retriever_cache[doc_url] = retriever
+
+#         logging.info(f"Answering {len(request_data.questions)} questions.")
+        
+#         answer_tasks = [
+#             asyncio.to_thread(answer_question, q, retriever) for q in request_data.questions
+#         ]
+#         answers = await asyncio.gather(*answer_tasks)
+        
+#         logging.info("All questions processed successfully.")
+#         return HackRxResponse(answers=answers)
+        
+#     except HTTPException as http_exc:
+#         raise http_exc
+#     except Exception as e:
+#         logging.error(f"A critical error occurred in /hackrx/run: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+# # This block is now responsible for starting the server on the correct port
+# if __name__ == "__main__":
+#     import uvicorn
+#     # Read the port from the environment variable provided by Cloud Run,
+#     # defaulting to 8000 if it's not set (for local development).
+#     port = int(os.getenv("PORT", 8000))
+#     uvicorn.run(app, host="0.0.0.0", port=port)
+#------------------------------------------------------------------YOGI D3--------------------------------------------------------------------
+
 
 import os
 import hashlib
@@ -259,6 +462,7 @@ class HackRxResponse(BaseModel):
 embedding_function = None
 llm = None
 prompt = None
+# In-memory cache to store retrievers for processed documents for performance
 retriever_cache = {}
 
 @asynccontextmanager
@@ -267,7 +471,8 @@ async def lifespan(app: FastAPI):
     global embedding_function, llm, prompt
     logging.info("Application startup: Initializing models...")
 
-    model_name = "BAAI/bge-large-en-v1.5"
+    # YOUR CHANGE: Using a smaller, faster model for better performance in Cloud Run
+    model_name = "sentence-transformers/all-MiniLM-L6-v2"
     model_kwargs = {"device": "cpu"}
     encode_kwargs = {"normalize_embeddings": True}
     embedding_function = HuggingFaceEmbeddings(
@@ -302,7 +507,7 @@ app = FastAPI(title="HackRx Optimized RAG API", lifespan=lifespan)
 
 def get_retriever_for_url(document_url: str):
     """
-    Creates a retriever for a given document URL. This function is computationally expensive
+    Creates a retriever for a given document URL. This is computationally expensive
     and its results should be cached.
     """
     try:
@@ -338,7 +543,7 @@ def get_retriever_for_url(document_url: str):
             search_kwargs={"k": 7}
         )
         
-        logging.info(f"Successfully created and cached retriever for document with {len(splits)} chunks")
+        logging.info(f"Successfully created retriever for document with {len(splits)} chunks")
         return retriever
         
     except Exception as e:
@@ -400,10 +605,11 @@ async def process_documents_and_questions(
         logging.error(f"A critical error occurred in /hackrx/run: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-# This block is now responsible for starting the server on the correct port
+# This block is used to run the server locally for testing.
+# The Dockerfile CMD will start the server in the deployed environment.
 if __name__ == "__main__":
     import uvicorn
-    # Read the port from the environment variable provided by Cloud Run,
-    # defaulting to 8000 if it's not set (for local development).
+    # Read the port from the environment variable, defaulting to 8000 for local use.
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
